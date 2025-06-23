@@ -43,8 +43,11 @@ app.post("/api/sessions", async (req, res) => {
       return res.status(400).json({ error: "Session ID required" });
     }
 
-    // Try to create new session (will fail if duplicate)
-    const newSession = await Session.create({ sessionId });
+    // Check if session exists
+    const existingSession = await Session.findOne({ sessionId });
+    if (existingSession) {
+      return res.status(400).json({ error: "Session already exists" });
+    }
 
     // If we get here, it's a new session
     await transporter.sendMail({
@@ -64,7 +67,7 @@ app.post("/api/sessions", async (req, res) => {
   }
 });
 
-app.get(" /*", (req, res) => res.sendFile("hello word"));
+app.get("/", (req, res) => res.sendFile("hello word"));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
