@@ -10,13 +10,18 @@ const app = express();
 app.use(cors());
 app.use(express.json()); // This is the crucial line for body parsing
 
-// MongoDB Connection
+// Improved MongoDB connection
 mongoose.connect(process.env.MONGODB_URI, {
   useNewUrlParser: true,
-  useUnifiedTopology: true
+  useUnifiedTopology: true,
+  serverSelectionTimeoutMS: 30000, // 30 seconds timeout
+  socketTimeoutMS: 30000
 })
 .then(() => console.log('✅ MongoDB connected'))
-.catch(err => console.error('❌ MongoDB connection error:', err));
+.catch(err => {
+  console.error('❌ MongoDB connection error:', err);
+  process.exit(1); // Exit if DB connection fails
+});
 
 // Session Model
 const sessionSchema = new mongoose.Schema({
